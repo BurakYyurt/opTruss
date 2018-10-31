@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 
+
 class Truss:
     # Truss Class.
     def __init__(self, param):
@@ -22,12 +23,12 @@ class Truss:
         self.nd = param["nd"]  # Number of Divisions of the Truss
         self.dia = param["dia"]  # Alignment of the Diagonals for Each Bay
 
-        self.B = param["B"] #
-        self.t = param["t"] #
+        self.B = param["B"]  #
+        self.t = param["t"]  #
 
-        self.nn = 2 * self.nd + 2 # Numer of Nodes
-        self.nm = 4 * self.nd + 1 # Number of Members
-        self.lines = [] # Line list for plotting
+        self.nn = 2 * self.nd + 2  # Numer of Nodes
+        self.nm = 4 * self.nd + 1  # Number of Members
+        self.lines = []  # Line list for plotting
 
         xvals = np.array([np.hstack((np.linspace(0, self.l, self.nd + 1), np.linspace(0, self.l, self.nd + 1)))]).T
         # Nodal coordinates - in X axis
@@ -36,7 +37,7 @@ class Truss:
 
         self.n_coord = np.hstack((xvals, yvals))
         self.n_conn = np.zeros((self.nm, 2))
-        self.n_bound = np.array([[0,1],[0,2],[self.nd,1],[self.nd*2 + 1, 1]])
+        self.n_bound = np.array([[0, 1], [0, 2], [self.nd, 1], [self.nd * 2 + 1, 1]])
         self.n_dof = np.zeros((self.nn, 2))
         self.geo_props = np.zeros((self.nm, 5))
         self.mate_props = np.zeros((self.nm, 2))
@@ -55,21 +56,23 @@ class Truss:
                 self.n_conn[i + 3 * self.nd + 1] = [i, i + self.nd + 2]
             else:
                 self.n_conn[i + 3 * self.nd + 1] = [i + self.nd + 1, i + 1]
+        self.n_conn = self.n_conn.astype(int)
 
         count = 0
         for n in range(self.nn):
-            for j in range(1,3):
-                if not np.equal(self.n_bound,[[n,j]]).all(axis=1).any():
-                    self.n_dof[n,j-1] = count
-                    count +=1
+            for j in range(1, 3):
+                if not np.equal(self.n_bound, [[n, j]]).all(axis=1).any():
+                    self.n_dof[n, j - 1] = int(count)
+                    count += 1
+
         for i in self.n_bound:
             node = i[0]
             dof = i[1]
-            self.n_dof[node, dof-1] = count
-            count +=1
+            self.n_dof[node, dof - 1] = int(count)
+            count += 1
 
     def truss_geo(self, offset=0):
-        # this metod is for creating drawing
+        # this method is for creating drawing
         lines = []
         for i in self.n_conn:
             node_i = int(i[0])
@@ -81,13 +84,13 @@ class Truss:
             coord_i = (coord_ix, coord_iz)
             coord_j = (coord_jx, coord_jz)
             lines.append([coord_i, coord_j])
-        return(lines)
+        return lines
 
     def geo_assign(self):
         # assigns member geometrical information
         A, I, r = shs_props(self.B, self.t)
 
-        for x,y in enumerate(self.n_conn):
+        for x, y in enumerate(self.n_conn):
             i = int(y[0])
             j = int(y[1])
 
@@ -100,7 +103,7 @@ class Truss:
             dx = jx - ix
             dy = jy - iy
 
-            L = np.sqrt(dx**2 + dy**2)
+            L = np.sqrt(dx ** 2 + dy ** 2)
             alpha = np.arctan2(dy, dx)
             self.geo_props[x] = [A, I, r, L, alpha]
 
@@ -111,28 +114,67 @@ class Truss:
         for i in range(self.nm):
             self.mate_props[i] = [E, fy]
 
-    #def forward_map(self):
-
-def stiffness():
+            # def forward_map(self):
 
 
-    pass
+
+    def stiffness(self):
+        k_stiff = np.zeros((2*self.nn, 2*self.nn))
+        f_force = np.zeros((2*self.nn, 1))
+        k_loc = np.zeros((4, 4))
+        r = np.zeros((4, 4))
+        for i in range(self.nm):
+            nodes = self.n_conn[i]
+            dofs = self.n_dof[nodes,:].reshape(4)
+            print(dofs)
+
+            A = self.geo_props[i, 0]
+            L = self.geo_props[i, 3]
+            alpha = self.geo_props[i, 4]
+            E = self.mate_props[i, 0]
+
+            k11 = E*A/L
+            k_loc[0, 0] = k11
+            k_loc[2, 2] = k11
+            k_loc[0, 2] = -k11
+            k_loc[2, 0] = -k11
+
+            r[0, 0] = np.cos(alpha)
+            r[0, 1] = np.sin(alpha)
+            r[1, 0] = -np.sin(alpha)
+            r[1, 1] = np.cos(alpha)
+            r[2, 2] = np.cos(alpha)
+            r[2, 3] = np.sin(alpha)
+            r[3, 2] = -np.sin(alpha)
+            r[3, 3] = np.cos(alpha)
+
+            k_gl = np.dot(np.dot(r.T, k_loc), r)
+
+            for x in range(4):
+                for y in range(4):
+                    dof1 = dofs[x]
+                    dof2 = dofs[y]
+
+                    k_stiff[dof1, dof2] += k_gl[x,y]
+
+        return  k_stiff
+
 
 def shs_props(B, t):
-    sec_A = B*B - (B-2*t) * (B-2*t)
-    sec_I = (B**4 - (B-2*t)**4)/12
+    sec_A = B * B - (B - 2 * t) * (B - 2 * t)
+    sec_I = (B ** 4 - (B - 2 * t) ** 4) / 12
     sec_r = np.sqrt(sec_I / sec_A)
-    return (sec_A, sec_I, sec_r)
+    return sec_A, sec_I, sec_r
 
 
-
-
-
-parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5, "dia": np.random.randint(2,size=5), "B": 250, "t":6}
+parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5, "dia": np.random.randint(2, size=5), "B": 250, "t": 6}
 
 T1 = Truss(parameters)
+T1.geo_assign()
+T1.mate_assign()
+
+T1.stiffness()
 lines = T1.truss_geo()
-#T1.sec_assign()
 
 ax = plt.axes()
 ax.set_xlim(-1000, 10000 + 1000)
