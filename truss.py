@@ -174,6 +174,7 @@ class Truss:
 
 
 def analyze(nn, nm, conn, dof, mate, geo, nforce):
+    # Stiffness assembly, force assembly and matrix inversion
     k_stiff = np.zeros((2 * nn, 2 * nn))
     k_loc = np.zeros((4, 4))
     r = np.zeros((4, 4))
