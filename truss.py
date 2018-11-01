@@ -12,6 +12,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
+from numpy.linalg import inv
 
 
 class Truss:
@@ -31,7 +32,7 @@ class Truss:
         self.nm = 4 * self.nd + 1  # Number of Members
         self.lines = []  # Line list for plotting
         self.j_forces = np.zeros((self.nn, 2))  # Joint Force Matrix
-        self.f = np.zeros((self.nn * 2))  # Dof Force Matrix - will be mapped from j_forces
+        self.f = np.zeros((self.nn * 2, 1))  # Dof Force Vector - will be mapped from j_forces
 
         xvals = np.array([np.hstack((np.linspace(0, self.l, self.nd + 1), np.linspace(0, self.l, self.nd + 1)))]).T
         # Nodal coordinates - in X axis
@@ -68,7 +69,6 @@ class Truss:
         for n in range(self.nn):
             for j in range(1, 3):
                 if not np.equal(self.n_bound, [[n, j]]).all(axis=1).any():
-                    print(np.equal(self.n_bound, [[n, j]]).all(axis=1).any(), n, j)
                     self.n_dof[n, j - 1] = int(count)
                     count += 1
         for i in self.n_bound:
@@ -104,28 +104,36 @@ class Truss:
             self.geo_props[x] = [A, I, r, L, alpha]
 
         # Assigning point loads to to top chord joints. First and last joints loaded half of the interior joints.
-        p = self.q * self.l / (self.nd + 1)
+        p = self.q * self.l / self.nd
         self.j_forces[self.nd, 1] = p / 2
-        self.j_forces[2 * self.nd - 1, 1] = p / 2
+        self.j_forces[2 * self.nd, 1] = p / 2
 
-        for i in range(self.nd + 1, 2 * self.nd - 1):
+        for i in range(self.nd + 1, 2 * self.nd):
             self.j_forces[i, 1] = p
 
-        # Mapping joint forces to dof forces. Difference is due to boundary contitions
+        # Mapping joint forces to dof forces. Difference is due to boundary conditions
+        # Assembling Force Vector
         for n, i in enumerate(self.n_dof):
-            self.f[int(i[0])] = self.j_forces[n, 0]
-            self.f[int(i[1])] = self.j_forces[n, 1]
+            self.f[int(i[0]), 0] = self.j_forces[n, 0]
+            self.f[int(i[1]), 0] = self.j_forces[n, 1]
 
-    def truss_geo(self, offset=0):
+    def truss_geo(self, offset = 0, deformed = False, ud = 0, scale=100):
         # this method is for creating drawing
+        u = np.zeros((self.nn*2 , 1))
+        if deformed:
+            u = ud
         lines = []
         for i in self.n_conn:
             node_i = int(i[0])
             node_j = int(i[1])
-            coord_ix = self.n_coord[node_i, 0]
-            coord_iz = self.n_coord[node_i, 1] + offset
-            coord_jx = self.n_coord[node_j, 0]
-            coord_jz = self.n_coord[node_j, 1] + offset
+            dofi_1 = int(self.n_dof[node_i,1])
+            dofj_0 = int(self.n_dof[node_j,0])
+            dofj_1 = int(self.n_dof[node_j,1])
+            dofi_0 = int(self.n_dof[node_i,0])
+            coord_ix = self.n_coord[node_i, 0] + u[dofi_0,0] * scale
+            coord_iz = self.n_coord[node_i, 1] + offset + u[dofi_1,0] * scale
+            coord_jx = self.n_coord[node_j, 0] + u[dofj_0,0] * scale
+            coord_jz = self.n_coord[node_j, 1] + offset + u[dofj_1,0] * scale
             coord_i = (coord_ix, coord_iz)
             coord_j = (coord_jx, coord_jz)
             lines.append([coord_i, coord_j])
@@ -173,7 +181,28 @@ class Truss:
         return k_stiff
 
 
-def analyze(nn, nm, conn, dof, mate, geo, nforce):
+def disp(f, k, n_bc):
+    n_dof = len(f)
+    kff = k[:-n_bc, :-n_bc]
+    #kfr = k[:-n_bc, -n_bc:]
+    krf = k[-n_bc:, :-n_bc]
+    #krr = k[-n_bc:, -n_bc:]
+
+    ff = f[:-n_bc]
+    ff.shape = (n_dof-n_bc,1)
+    #fr = f[-n_bc:]
+    #fr.shape = (n_bc,1)
+
+
+    ur = np.zeros((n_bc,1))
+
+    uf = np.dot(inv(kff), ff) # - np.dot(kfr, ur)))
+    r = np.dot(krf, uf) # + np.dot(krr, ur) - fr
+    print(uf,r)
+
+    return uf
+
+def stiff(nn, nm, conn, dof, mate, geo):
     # Stiffness assembly, force assembly and matrix inversion
     k_stiff = np.zeros((2 * nn, 2 * nn))
     k_loc = np.zeros((4, 4))
@@ -222,12 +251,18 @@ def shs_props(B, t):
 
 
 parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5,
-              "dia": np.random.randint(2, size=5), "B": 250,
-              "t": 6, "q": 10}
+              "dia": np.array([0,0,0,1,1]), "B": 250, #np.random.randint(2, size=5)
+              "t": 6, "q": -10}
 
 T1 = Truss(parameters)
+k = T1.stiffness()
+print(T1.f)
+u = np.vstack((disp(T1.f,k,4),np.zeros((4,1))))
 
-T1.stiffness()
+
+
+#print(disp(T1.f,k,3))
+
 lines = T1.truss_geo()
 
 ax = plt.axes()
@@ -235,4 +270,13 @@ ax.set_xlim(-1000, 10000 + 1000)
 ax.set_ylim(-1000, 1 * (12000 + 1000))
 segments = LineCollection(lines, linewidths=2)
 ax.add_collection(segments)
+
+lines = T1.truss_geo(deformed = True, ud = u, scale=1000)
+
+ax = plt.axes()
+ax.set_xlim(-1000, 10000 + 1000)
+ax.set_ylim(-1000, 1 * (12000 + 1000))
+segments = LineCollection(lines, linewidths=2)
+ax.add_collection(segments)
+
 plt.show()
