@@ -24,6 +24,7 @@ class Truss:
         self.nd = param["nd"]  # Number of Divisions of the Truss
         self.dia = param["dia"]  # Alignment of the Diagonals for Each Bay
 
+
         self.B = param["B"]  # Height of SHS member
         self.t = param["t"]  # Wall Thickness of SHS member in mm
         self.q = param["q"]  # Line Load on the Truss in kN/m
@@ -33,6 +34,7 @@ class Truss:
         self.lines = []  # Line list for plotting
         self.j_forces = np.zeros((self.nn, 2))  # Joint Force Matrix
         self.f = np.zeros((self.nn * 2, 1))  # Dof Force Vector - will be mapped from j_forces
+        self.u = np.zeros((self.nn * 2, 1))  # Deformation Field
 
         xvals = np.array([np.hstack((np.linspace(0, self.l, self.nd + 1), np.linspace(0, self.l, self.nd + 1)))]).T
         # Nodal coordinates - in X axis
@@ -105,10 +107,10 @@ class Truss:
 
         # Assigning point loads to to top chord joints. First and last joints loaded half of the interior joints.
         p = self.q * self.l / self.nd
-        self.j_forces[self.nd, 1] = p / 2
-        self.j_forces[2 * self.nd, 1] = p / 2
+        self.j_forces[self.nd + 1, 1] = p / 2
+        self.j_forces[2 * self.nd + 1, 1] = p / 2
 
-        for i in range(self.nd + 1, 2 * self.nd):
+        for i in range(self.nd + 2, 2 * self.nd+1):
             self.j_forces[i, 1] = p
 
         # Mapping joint forces to dof forces. Difference is due to boundary conditions
@@ -141,7 +143,6 @@ class Truss:
 
     def stiffness(self):
         # Assembling stiffness matrix. Usual procedure.
-
         k_stiff = np.zeros((2 * self.nn, 2 * self.nn))
         k_loc = np.zeros((4, 4))
         r = np.zeros((4, 4))
@@ -180,6 +181,8 @@ class Truss:
 
         return k_stiff
 
+    def member_force(self):
+        pass
 
 def disp(f, k, n_bc):
     n_dof = len(f)
@@ -190,17 +193,16 @@ def disp(f, k, n_bc):
 
     ff = f[:-n_bc]
     ff.shape = (n_dof-n_bc,1)
-    #fr = f[-n_bc:]
-    #fr.shape = (n_bc,1)
-
+    # fr = f[-n_bc:]
+    # fr.shape = (n_bc,1)
 
     ur = np.zeros((n_bc,1))
 
     uf = np.dot(inv(kff), ff) # - np.dot(kfr, ur)))
     r = np.dot(krf, uf) # + np.dot(krr, ur) - fr
-    print(uf,r)
 
     return uf
+
 
 def stiff(nn, nm, conn, dof, mate, geo):
     # Stiffness assembly, force assembly and matrix inversion
@@ -243,6 +245,8 @@ def stiff(nn, nm, conn, dof, mate, geo):
     return k_stiff
 
 
+
+
 def shs_props(B, t):
     sec_A = B * B - (B - 2 * t) * (B - 2 * t)
     sec_I = (B ** 4 - (B - 2 * t) ** 4) / 12
@@ -251,15 +255,13 @@ def shs_props(B, t):
 
 
 parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5,
-              "dia": np.array([0,0,0,1,1]), "B": 250, #np.random.randint(2, size=5)
+              "dia": np.array([0,0,0,1,1]), "B": 250,  # np.random.randint(2, size=5)
               "t": 6, "q": -10}
+
 
 T1 = Truss(parameters)
 k = T1.stiffness()
-print(T1.f)
 u = np.vstack((disp(T1.f,k,4),np.zeros((4,1))))
-
-
 
 #print(disp(T1.f,k,3))
 
