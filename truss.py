@@ -13,20 +13,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 from numpy.linalg import inv
+import random as rnd
 
 
 class Truss:
     # Truss Class.
-    def __init__(self, param):
-        self.h1 = param[0]  # Shoulder Height of the Truss in mm
-        self.h2 = param[1]  # Peak Height of the Truss in mm
-        self.L = param[2]  # Half of the Span Length of the Truss
-        self.nd = param[3]  # Number of Divisions of the Truss
-        self.dia = param[4]  # Alignment of the Diagonals for Each Bay
+    def __init__(self, DNA, param):
+        self.h1 = DNA[0]  # Shoulder Height of the Truss in mm
+        self.h2 = DNA[1]  # Peak Height of the Truss in mm
+        self.nd = DNA[2]  # Number of Divisions of the Truss
+        self.dia = DNA[3]  # Alignment of the Diagonals for Each Bay
 
-        self.B = param[5]  # Height of SHS member
-        self.t = param[6]  # Wall Thickness of SHS member in mm
-        self.q = param[7]  # Line Load on the Truss in kN/m
+        self.B = [shs_catalog[int(i)][0] for i in DNA[4]]  # Height of SHS member
+        self.t = [shs_catalog[int(i)][1] for i in DNA[4]]  # Wall Thickness of SHS member in mm
+
+        self.L = param[0]  # Half of the Span Length of the Truss
+        self.q = param[1]  # Line Load on the Truss in kN/m
 
         self.nn = 2 * self.nd + 2  # Numer of Nodes
         self.nm = 4 * self.nd + 1  # Number of Members
@@ -342,19 +344,50 @@ def design(N, sec, geo, mat):
             return abs(N / Pn)
 
 
-def population(size, parameters, constraints, mutation = 0.1):
-    for i in range(size):
-        pass
+def population(size, param, const, seed=0):
+    if seed:
+        rnd.seed(seed)
+    pop = []
+    for _ in range(size):
+        h1 = rnd.randrange(param[0][0], param[0][1], param[0][2])
+        h2 = rnd.randrange(max(h1,param[1][0]), param[1][1], param[1][2])
+        n_div = rnd.randint(param[2][0], param[2][1])
+        division = [rnd.randrange(0, 3, 1) for j in range(n_div)]
+        sec = []
+        cnt = len(shs_catalog)
+        for i in range(8):
+            sec.append(rnd.randint(0, cnt-1))
 
-parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5,
-              "dia": np.array([0, 0, 0, 1, 1]), "B": (250, 250, 250, 250, 250, 250, 250, 250),  # np.random.randint(2, size=5)
-              "t": (6, 6, 6, 6, 6, 6, 6, 6), "q": -10}
+        pop.append(Truss([h1,h2,n_div,division,sec],const))
+    return pop
 
-T1 = Truss(parameters)
+
+
+shs_catalog = [[20, 2], [30, 2], [40, 2], [40, 3], [40, 4], [50, 2], [50, 3], [50, 4], [50, 5], [60, 3], [60, 2],
+               [60, 4], [70, 3], [60, 5], [70, 4],
+               [70, 5], [80, 3], [80, 4], [80, 5], [80, 6], [90, 3], [90, 4], [90, 5], [90, 6], [100, 5], [100, 4],
+               [100, 6], [120, 5], [120, 4],
+               [120, 6], [120, 8], [140, 4], [140, 5], [140, 6], [140, 8], [140, 10], [150, 5], [150, 6], [150, 8],
+               [160, 4], [150, 10],
+               [160, 5], [160, 8], [160, 6], [160, 10], [180, 6], [180, 8], [180, 10], [180, 12.5], [200, 6], [200, 8],
+               [200, 10], [200, 12.5],
+               [220, 8], [220, 12.5], [220, 10], [250, 6], [250, 10], [250, 8], [250, 12.5], [260, 8], [260, 10],
+               [260, 12.5], [300, 6],
+               [300, 8], [300, 10], [300, 12.5], [350, 8], [350, 10], [400, 10], [350, 12.5], [400, 12.5]]
+
+
+parameters = ([1000,2000,250],[1000,4000,250],[3,10])
+constraints = (10000,-200)
+
+Trusses = population(100,parameters,constraints)
+
+T1 = Trusses[0]
 k = T1.stiffness()
 u = np.vstack((disp(T1.f, k, 4), np.zeros((4, 1))))
 T1.u = u
 T1.member_force()
+print(T1.h1, T1.h2, T1.nd, T1.dia, T1.B, T1.t)
+print(T1.u, T1.util, T1.p/1000)
 
 lines = T1.truss_geo()
 
@@ -364,7 +397,7 @@ ax.set_ylim(-1000, 1 * (12000 + 1000))
 segments = LineCollection(lines, linewidths=2)
 ax.add_collection(segments)
 
-lines = T1.truss_geo(deformed=True, ud=u, scale=1000)
+lines = T1.truss_geo(deformed=True, ud=u, scale=1)
 
 ax = plt.axes()
 ax.set_xlim(-1000, 10000 + 1000)
