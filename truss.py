@@ -18,25 +18,26 @@ from numpy.linalg import inv
 class Truss:
     # Truss Class.
     def __init__(self, param):
-        self.h1 = param["h1"]  # Shoulder Height of the Truss in mm
-        self.h2 = param["h2"]  # Peak Height of the Truss in mm
-        self.l = param["l"]  # Half of the Span Length of the Truss
-        self.nd = param["nd"]  # Number of Divisions of the Truss
-        self.dia = param["dia"]  # Alignment of the Diagonals for Each Bay
+        self.h1 = param[0]  # Shoulder Height of the Truss in mm
+        self.h2 = param[1]  # Peak Height of the Truss in mm
+        self.L = param[2]  # Half of the Span Length of the Truss
+        self.nd = param[3]  # Number of Divisions of the Truss
+        self.dia = param[4]  # Alignment of the Diagonals for Each Bay
 
-
-        self.B = param["B"]  # Height of SHS member
-        self.t = param["t"]  # Wall Thickness of SHS member in mm
-        self.q = param["q"]  # Line Load on the Truss in kN/m
+        self.B = param[5]  # Height of SHS member
+        self.t = param[6]  # Wall Thickness of SHS member in mm
+        self.q = param[7]  # Line Load on the Truss in kN/m
 
         self.nn = 2 * self.nd + 2  # Numer of Nodes
         self.nm = 4 * self.nd + 1  # Number of Members
-        self.lines = []  # Line list for plotting
+        self.Lines = []  # Line list for plotting
         self.j_forces = np.zeros((self.nn, 2))  # Joint Force Matrix
         self.f = np.zeros((self.nn * 2, 1))  # Dof Force Vector - will be mapped from j_forces
         self.u = np.zeros((self.nn * 2, 1))  # Deformation Field
+        self.p = np.zeros((self.nm, 1))  # Member Axial Forces
+        self.util = np.zeros((self.nm, 1))  # Member Utilization Ratios
 
-        xvals = np.array([np.hstack((np.linspace(0, self.l, self.nd + 1), np.linspace(0, self.l, self.nd + 1)))]).T
+        xvals = np.array([np.hstack((np.linspace(0, self.L, self.nd + 1), np.linspace(0, self.L, self.nd + 1)))]).T
         # Nodal coordinates - in X axis
 
         yvals = np.array([np.hstack((np.zeros(self.nd + 1), np.linspace(self.h1, self.h2, self.nd + 1)))]).T
@@ -46,24 +47,49 @@ class Truss:
         self.n_conn = np.zeros((self.nm, 2))  # Connectivity matrix
         self.n_bound = np.array([[0, 1], [0, 2], [self.nd, 1], [self.nd * 2 + 1, 1]])  # Introducing boundary cnds.
         self.n_dof = np.zeros((self.nn, 2))  # Nodal Dof matrix - info on which dof is assigned to which joint
-        self.geo_props = np.zeros((self.nm, 5))  # Geometric props. of each member.
-        self.mate_props = np.zeros((self.nm, 2))  # Material props. of each member.
+        self.m_type = np.zeros((self.nm, 1))  # Member Type bot chord :0, top chord :1, post :2, diagonal :3
+        self.geo_props = []  # Geometric props. of each member.
+        self.mate_props = []  # Material props. of each member.
+        self.sec_props = []  # Section props. of each member.
 
         # Populating connectivity matrix
         for i in range(self.nd):
             self.n_conn[i] = [i, i + 1]
+            if i < self.nd / 2:
+                mt = 0
+            else:
+                mt = 1
+            self.m_type[i] = mt
 
         for i in range(self.nd):
             self.n_conn[i + self.nd] = [i + self.nd + 1, i + self.nd + 2]
+            if i < self.nd / 2:
+                mt = 0
+            else:
+                mt = 1
+            self.m_type[i + self.nd] = 2 + mt
 
         for i in range(self.nd + 1):
             self.n_conn[i + 2 * self.nd] = [i, i + self.nd + 1]
+            if i < self.nd / 2:
+                mt = 0
+            else:
+                mt = 1
+            self.m_type[i + 2 * self.nd] = 4 + mt
 
         for i in range(self.nd):
+
+            if i < self.nd / 2:
+                mt = 0
+            else:
+                mt = 1
+            self.m_type[i + 3 * self.nd + 1] = 6 + mt
+
             if self.dia[i]:
                 self.n_conn[i + 3 * self.nd + 1] = [i, i + self.nd + 2]
             else:
                 self.n_conn[i + 3 * self.nd + 1] = [i + self.nd + 1, i + 1]
+
         self.n_conn = self.n_conn.astype(int)
 
         # Populating dof matrix - restrained dofs are shifted to the end.
@@ -73,6 +99,7 @@ class Truss:
                 if not np.equal(self.n_bound, [[n, j]]).all(axis=1).any():
                     self.n_dof[n, j - 1] = int(count)
                     count += 1
+
         for i in self.n_bound:
             node = i[0]
             dof = i[1]
@@ -83,11 +110,14 @@ class Truss:
         fy = 355  # N/mm2
 
         for i in range(self.nm):
-            self.mate_props[i] = [E, fy]
+            self.mate_props.append((E, fy))
+
+        for i in range(self.nm):
+            mt = int(self.m_type[i])
+            A, I, r = shs_props(self.B[mt], self.t[mt])
+            self.sec_props.append((self.B[mt], self.t[mt], A, I, r))
 
         # Geometric Properties
-        A, I, r = shs_props(self.B, self.t)
-
         for x, y in enumerate(self.n_conn):
             i = int(y[0])
             j = int(y[1])
@@ -103,14 +133,14 @@ class Truss:
 
             L = np.sqrt(dx ** 2 + dy ** 2)
             alpha = np.arctan2(dy, dx)
-            self.geo_props[x] = [A, I, r, L, alpha]
+            self.geo_props.append((L, alpha))
 
         # Assigning point loads to to top chord joints. First and last joints loaded half of the interior joints.
-        p = self.q * self.l / self.nd
+        p = self.q * self.L / self.nd
         self.j_forces[self.nd + 1, 1] = p / 2
         self.j_forces[2 * self.nd + 1, 1] = p / 2
 
-        for i in range(self.nd + 2, 2 * self.nd+1):
+        for i in range(self.nd + 2, 2 * self.nd + 1):
             self.j_forces[i, 1] = p
 
         # Mapping joint forces to dof forces. Difference is due to boundary conditions
@@ -119,23 +149,23 @@ class Truss:
             self.f[int(i[0]), 0] = self.j_forces[n, 0]
             self.f[int(i[1]), 0] = self.j_forces[n, 1]
 
-    def truss_geo(self, offset = 0, deformed = False, ud = 0, scale=100):
+    def truss_geo(self, offset=0, deformed=False, ud=0, scale=100):
         # this method is for creating drawing
-        u = np.zeros((self.nn*2 , 1))
+        u = np.zeros((self.nn * 2, 1))
         if deformed:
             u = ud
         lines = []
         for i in self.n_conn:
             node_i = int(i[0])
             node_j = int(i[1])
-            dofi_1 = int(self.n_dof[node_i,1])
-            dofj_0 = int(self.n_dof[node_j,0])
-            dofj_1 = int(self.n_dof[node_j,1])
-            dofi_0 = int(self.n_dof[node_i,0])
-            coord_ix = self.n_coord[node_i, 0] + u[dofi_0,0] * scale
-            coord_iz = self.n_coord[node_i, 1] + offset + u[dofi_1,0] * scale
-            coord_jx = self.n_coord[node_j, 0] + u[dofj_0,0] * scale
-            coord_jz = self.n_coord[node_j, 1] + offset + u[dofj_1,0] * scale
+            dofi_1 = int(self.n_dof[node_i, 1])
+            dofj_0 = int(self.n_dof[node_j, 0])
+            dofj_1 = int(self.n_dof[node_j, 1])
+            dofi_0 = int(self.n_dof[node_i, 0])
+            coord_ix = self.n_coord[node_i, 0] + u[dofi_0, 0] * scale
+            coord_iz = self.n_coord[node_i, 1] + offset + u[dofi_1, 0] * scale
+            coord_jx = self.n_coord[node_j, 0] + u[dofj_0, 0] * scale
+            coord_jz = self.n_coord[node_j, 1] + offset + u[dofj_1, 0] * scale
             coord_i = (coord_ix, coord_iz)
             coord_j = (coord_jx, coord_jz)
             lines.append([coord_i, coord_j])
@@ -151,10 +181,9 @@ class Truss:
             nodes = self.n_conn[i]
             dofs = self.n_dof[nodes, :].reshape(4)
 
-            A = self.geo_props[i, 0]
-            L = self.geo_props[i, 3]
-            alpha = self.geo_props[i, 4]
-            E = self.mate_props[i, 0]
+            L, alpha = self.geo_props[i]
+            B, t, A, I, ir = self.sec_props[i]
+            E, fy = self.mate_props[i]
 
             k11 = E * A / L
             k_loc[0, 0] = k11
@@ -182,24 +211,53 @@ class Truss:
         return k_stiff
 
     def member_force(self):
-        pass
+        k_loc = np.zeros((4, 4))
+        r = np.zeros((4, 4))
+        for i, n in enumerate(self.sec_props):
+            nodes = self.n_conn[i]
+            dofs = self.n_dof[nodes, :].reshape(4).astype(int)
+            u_mem = self.u[dofs, :]
+
+            L, alpha = self.geo_props[i]
+            B, t, A, I, ir = n
+            E, fy = self.mate_props[i]
+
+            k11 = E * A / L
+            k_loc[0, 0] = k11
+            k_loc[2, 2] = k11
+            k_loc[0, 2] = -k11
+            k_loc[2, 0] = -k11
+
+            r[0, 0] = np.cos(alpha)
+            r[0, 1] = np.sin(alpha)
+            r[1, 0] = -np.sin(alpha)
+            r[1, 1] = np.cos(alpha)
+            r[2, 2] = np.cos(alpha)
+            r[2, 3] = np.sin(alpha)
+            r[3, 2] = -np.sin(alpha)
+            r[3, 3] = np.cos(alpha)
+
+            f = np.dot(k_loc, np.dot(r, u_mem))
+            self.p[i] = (f[2] - f[0]) / 2
+            self.util[i] = design(self.p[i], n, self.geo_props[i], self.mate_props[i])
+
 
 def disp(f, k, n_bc):
     n_dof = len(f)
     kff = k[:-n_bc, :-n_bc]
-    #kfr = k[:-n_bc, -n_bc:]
+    # kfr = k[:-n_bc, -n_bc:]
     krf = k[-n_bc:, :-n_bc]
-    #krr = k[-n_bc:, -n_bc:]
+    # krr = k[-n_bc:, -n_bc:]
 
     ff = f[:-n_bc]
-    ff.shape = (n_dof-n_bc,1)
+    ff.shape = (n_dof - n_bc, 1)
     # fr = f[-n_bc:]
     # fr.shape = (n_bc,1)
 
-    ur = np.zeros((n_bc,1))
+    ur = np.zeros((n_bc, 1))
 
-    uf = np.dot(inv(kff), ff) # - np.dot(kfr, ur)))
-    r = np.dot(krf, uf) # + np.dot(krr, ur) - fr
+    uf = np.dot(inv(kff), ff)  # - np.dot(kfr, ur)))
+    r = np.dot(krf, uf)  # + np.dot(krr, ur) - fr
 
     return uf
 
@@ -245,8 +303,6 @@ def stiff(nn, nm, conn, dof, mate, geo):
     return k_stiff
 
 
-
-
 def shs_props(B, t):
     sec_A = B * B - (B - 2 * t) * (B - 2 * t)
     sec_I = (B ** 4 - (B - 2 * t) ** 4) / 12
@@ -254,16 +310,51 @@ def shs_props(B, t):
     return sec_A, sec_I, sec_r
 
 
-parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5,
-              "dia": np.array([0,0,0,1,1]), "B": 250,  # np.random.randint(2, size=5)
-              "t": 6, "q": -10}
+def design(N, sec, geo, mat):
+    B, t, A, I, r = sec
+    L, alpha = geo
+    E, fy = mat
 
+    if N > 0:
+        Pn = 0.9 * A * fy
+        return N / Pn
+    else:
+        b = B - 2 * t
+        lmd = b / t
+        lmdr = 1.4 * np.sqrt(E / fy)
+        Fe = (np.pi ** 2) * E / (L / r)
+        if L / r < 4.71 * np.sqrt(E / fy):
+            Fcr = fy * (0.658 ** (fy / Fe))
+        else:
+            Fcr = 0.877 * Fe
+
+        if lmd < lmdr * np.sqrt(E / fy):
+            # Section fully compact
+            Pn = 0.9 * A * Fcr
+            return abs(N / Pn)
+        else:
+            c1 = 0.18
+            c2 = 1.31
+            Fel = c2 * lmdr * fy / lmd
+            U = (1 - c1 * np.sqrt(Fel / fy)) * np.sqrt(Fel / fy)
+            Ae = U * A
+            Pn = 0.9 * Ae * Fcr
+            return abs(N / Pn)
+
+
+def population(size, parameters, constraints, mutation = 0.1):
+    for i in range(size):
+        pass
+
+parameters = {"h1": 2000, "h2": 4000, "l": 10000, "nd": 5,
+              "dia": np.array([0, 0, 0, 1, 1]), "B": (250, 250, 250, 250, 250, 250, 250, 250),  # np.random.randint(2, size=5)
+              "t": (6, 6, 6, 6, 6, 6, 6, 6), "q": -10}
 
 T1 = Truss(parameters)
 k = T1.stiffness()
-u = np.vstack((disp(T1.f,k,4),np.zeros((4,1))))
-
-#print(disp(T1.f,k,3))
+u = np.vstack((disp(T1.f, k, 4), np.zeros((4, 1))))
+T1.u = u
+T1.member_force()
 
 lines = T1.truss_geo()
 
@@ -273,7 +364,7 @@ ax.set_ylim(-1000, 1 * (12000 + 1000))
 segments = LineCollection(lines, linewidths=2)
 ax.add_collection(segments)
 
-lines = T1.truss_geo(deformed = True, ud = u, scale=1000)
+lines = T1.truss_geo(deformed=True, ud=u, scale=1000)
 
 ax = plt.axes()
 ax.set_xlim(-1000, 10000 + 1000)
