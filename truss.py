@@ -14,9 +14,7 @@ import numpy as np
 from matplotlib.collections import LineCollection
 from numpy.linalg import inv
 import random as rnd
-import pprint as pp
 np.set_printoptions(suppress=True,precision=2)
-
 
 
 class Truss:
