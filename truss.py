@@ -19,6 +19,8 @@ import random as rnd
 class Truss:
     # Truss Class.
     def __init__(self, DNA, param):
+        self.point = 0  # Fitness point set to zero at initiation
+
         self.h1 = DNA[0]  # Shoulder Height of the Truss in mm
         self.h2 = DNA[1]  # Peak Height of the Truss in mm
         self.nd = DNA[2]  # Number of Divisions of the Truss
@@ -151,7 +153,13 @@ class Truss:
             self.f[int(i[0]), 0] = self.j_forces[n, 0]
             self.f[int(i[1]), 0] = self.j_forces[n, 1]
 
-    def truss_geo(self, offset=0, deformed=False, ud=0, scale=100):
+        self.W = 0
+        for n,i in enumerate(self.sec_props):
+            L, alpha = self.geo_props[n]
+            B, t, A, I, ir = i
+            self.W += L*A*7.85e-3
+
+    def truss_geo(self, offset=0, deformed=False, ud=0, scale=20):
         # this method is for creating drawing
         u = np.zeros((self.nn * 2, 1))
         if deformed:
@@ -212,7 +220,7 @@ class Truss:
 
         return k_stiff
 
-    def member_force(self):
+    def analyze(self):
         k_loc = np.zeros((4, 4))
         r = np.zeros((4, 4))
         for i, n in enumerate(self.sec_props):
@@ -241,7 +249,7 @@ class Truss:
 
             f = np.dot(k_loc, np.dot(r, u_mem))
             self.p[i] = (f[2] - f[0]) / 2
-            self.util[i] = design(self.p[i], n, self.geo_props[i], self.mate_props[i])
+            self.util[i] = mem_design(self.p[i], n, self.geo_props[i], self.mate_props[i])
 
 
 def disp(f, k, n_bc):
@@ -264,45 +272,45 @@ def disp(f, k, n_bc):
     return uf
 
 
-def stiff(nn, nm, conn, dof, mate, geo):
-    # Stiffness assembly, force assembly and matrix inversion
-    k_stiff = np.zeros((2 * nn, 2 * nn))
-    k_loc = np.zeros((4, 4))
-    r = np.zeros((4, 4))
-
-    for i in range(nm):
-        nodes = conn[i]
-        dofs = dof[nodes, :].reshape(4)
-
-        A = geo[i, 0]
-        L = geo[i, 3]
-        alpha = geo[i, 4]
-        E = mate[i, 0]
-
-        k11 = E * A / L
-        k_loc[0, 0] = k11
-        k_loc[2, 2] = k11
-        k_loc[0, 2] = -k11
-        k_loc[2, 0] = -k11
-
-        r[0, 0] = np.cos(alpha)
-        r[0, 1] = np.sin(alpha)
-        r[1, 0] = -np.sin(alpha)
-        r[1, 1] = np.cos(alpha)
-        r[2, 2] = np.cos(alpha)
-        r[2, 3] = np.sin(alpha)
-        r[3, 2] = -np.sin(alpha)
-        r[3, 3] = np.cos(alpha)
-
-        k_gl = np.dot(np.dot(r.T, k_loc), r)
-
-        for x in range(4):
-            for y in range(4):
-                dof1 = dofs[x]
-                dof2 = dofs[y]
-                k_stiff[dof1, dof2] += k_gl[x, y]
-
-    return k_stiff
+# def stiff(nn, nm, conn, dof, mate, geo):
+#     # Stiffness assembly, force assembly and matrix inversion
+#     k_stiff = np.zeros((2 * nn, 2 * nn))
+#     k_loc = np.zeros((4, 4))
+#     r = np.zeros((4, 4))
+#
+#     for i in range(nm):
+#         nodes = conn[i]
+#         dofs = dof[nodes, :].reshape(4)
+#
+#         A = geo[i, 0]
+#         L = geo[i, 3]
+#         alpha = geo[i, 4]
+#         E = mate[i, 0]
+#
+#         k11 = E * A / L
+#         k_loc[0, 0] = k11
+#         k_loc[2, 2] = k11
+#         k_loc[0, 2] = -k11
+#         k_loc[2, 0] = -k11
+#
+#         r[0, 0] = np.cos(alpha)
+#         r[0, 1] = np.sin(alpha)
+#         r[1, 0] = -np.sin(alpha)
+#         r[1, 1] = np.cos(alpha)
+#         r[2, 2] = np.cos(alpha)
+#         r[2, 3] = np.sin(alpha)
+#         r[3, 2] = -np.sin(alpha)
+#         r[3, 3] = np.cos(alpha)
+#
+#         k_gl = np.dot(np.dot(r.T, k_loc), r)
+#
+#         for x in range(4):
+#             for y in range(4):
+#                 dof1 = dofs[x]
+#                 dof2 = dofs[y]
+#                 k_stiff[dof1, dof2] += k_gl[x, y]
+#
+#     return k_stiff
 
 
 def shs_props(B, t):
@@ -312,7 +320,7 @@ def shs_props(B, t):
     return sec_A, sec_I, sec_r
 
 
-def design(N, sec, geo, mat):
+def mem_design(N, sec, geo, mat):
     B, t, A, I, r = sec
     L, alpha = geo
     E, fy = mat
@@ -362,6 +370,40 @@ def population(size, param, const, seed=0):
     return pop
 
 
+def pop_analyze(trusses):
+    wg = np.zeros((len(trusses),2))
+    for n,i in enumerate(trusses):
+        wg[n] = [n,i.W]
+        i.analyze()
+    ws = wg[wg[:,1].argsort()]
+
+    w_pnt = 1000
+    w_decr = w_pnt/len(trusses)
+    util_pnt = 1000
+    el_pnt = -10
+
+    for n,i in enumerate(ws):
+        trusses[int(i[0])].point -= w_decr * n  # Weight Point
+
+    for i in trusses:
+
+        for j in i.util:
+            i.point += util_pnt * j * np.sign(0.95 - j)  #  Utilization Point
+
+        i.point += el_pnt * i.nm  # Member Count Point
+
+        print(i.point)
+
+
+
+
+
+
+def fitness(mem):
+    out = 0
+
+
+
 
 shs_catalog = [[20, 2], [30, 2], [40, 2], [40, 3], [40, 4], [50, 2], [50, 3], [50, 4], [50, 5], [60, 3], [60, 2],
                [60, 4], [70, 3], [60, 5], [70, 4],
@@ -377,32 +419,29 @@ shs_catalog = [[20, 2], [30, 2], [40, 2], [40, 3], [40, 4], [50, 2], [50, 3], [5
 
 
 parameters = ([1000,2000,250],[1000,4000,250],[3,10])
-constraints = (10000,-200)
+constraints = (10000,-20)
 
 Trusses = population(100,parameters,constraints)
+
+
+pop_analyze(Trusses)
 
 T1 = Trusses[0]
 k = T1.stiffness()
 u = np.vstack((disp(T1.f, k, 4), np.zeros((4, 1))))
 T1.u = u
-T1.member_force()
-print(T1.h1, T1.h2, T1.nd, T1.dia, T1.B, T1.t)
-print(T1.u, T1.util, T1.p/1000)
 
 lines = T1.truss_geo()
 
 ax = plt.axes()
 ax.set_xlim(-1000, 10000 + 1000)
-ax.set_ylim(-1000, 1 * (12000 + 1000))
+ax.set_ylim(-3000, 1 * (12000 + 1000))
 segments = LineCollection(lines, linewidths=2)
 ax.add_collection(segments)
 
-lines = T1.truss_geo(deformed=True, ud=u, scale=1)
+lines = T1.truss_geo(deformed=True, ud=u)
 
-ax = plt.axes()
-ax.set_xlim(-1000, 10000 + 1000)
-ax.set_ylim(-1000, 1 * (12000 + 1000))
-segments = LineCollection(lines, linewidths=2)
+segments = LineCollection(lines, linewidths=2,color="r")
 ax.add_collection(segments)
 
 plt.show()
