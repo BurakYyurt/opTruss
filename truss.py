@@ -14,6 +14,9 @@ import numpy as np
 from matplotlib.collections import LineCollection
 from numpy.linalg import inv
 import random as rnd
+import pprint as pp
+np.set_printoptions(suppress=True,precision=2)
+
 
 
 class Truss:
@@ -154,10 +157,10 @@ class Truss:
             self.f[int(i[1]), 0] = self.j_forces[n, 1]
 
         self.W = 0
-        for n,i in enumerate(self.sec_props):
+        for n, i in enumerate(self.sec_props):
             L, alpha = self.geo_props[n]
             B, t, A, I, ir = i
-            self.W += L*A*7.85e-3
+            self.W += L * A * 7.85e-6
 
     def truss_geo(self, offset=0, deformed=False, ud=0, scale=20):
         # this method is for creating drawing
@@ -358,51 +361,43 @@ def population(size, param, const, seed=0):
     pop = []
     for _ in range(size):
         h1 = rnd.randrange(param[0][0], param[0][1], param[0][2])
-        h2 = rnd.randrange(max(h1,param[1][0]), param[1][1], param[1][2])
+        h2 = rnd.randrange(max(h1, param[1][0]), param[1][1], param[1][2])
         n_div = rnd.randint(param[2][0], param[2][1])
         division = [rnd.randrange(0, 3, 1) for j in range(n_div)]
         sec = []
         cnt = len(shs_catalog)
         for i in range(8):
-            sec.append(rnd.randint(0, cnt-1))
+            sec.append(rnd.randint(0, cnt - 1))
 
-        pop.append(Truss([h1,h2,n_div,division,sec],const))
+        pop.append(Truss([h1, h2, n_div, division, sec], const))
     return pop
 
 
 def pop_analyze(trusses):
-    wg = np.zeros((len(trusses),2))
-    for n,i in enumerate(trusses):
-        wg[n] = [n,i.W]
+    for i in trusses:
+        k = i.stiffness()
         i.analyze()
-    ws = wg[wg[:,1].argsort()]
+        u = np.vstack((disp(i.f, k, 4), np.zeros((4, 1))))
+        i.u = u
+
+
+def fitness(trusses):
+    wg = np.zeros((len(trusses), 2))
+    for n, i in enumerate(trusses):
+        wg[n] = [n, i.W]
+        i.analyze()
+    ws = wg[wg[:, 1].argsort()]
 
     w_pnt = 1000
-    w_decr = w_pnt/len(trusses)
+    w_decr = w_pnt / len(trusses)
     util_pnt = 1000
     el_pnt = -10
 
-    for n,i in enumerate(ws):
-        trusses[int(i[0])].point -= w_decr * n  # Weight Point
-
-    for i in trusses:
-
+    for n,i in enumerate(trusses):
+        i.point -= w_decr * np.where(ws == i.W)[0]  # Weight Point
         for j in i.util:
-            i.point += util_pnt * j * np.sign(0.95 - j)  #  Utilization Point
-
+            i.point += util_pnt * j * np.sign(0.95 - j)  # Utilization Point
         i.point += el_pnt * i.nm  # Member Count Point
-
-        print(i.point)
-
-
-
-
-
-
-def fitness(mem):
-    out = 0
-
-
 
 
 shs_catalog = [[20, 2], [30, 2], [40, 2], [40, 3], [40, 4], [50, 2], [50, 3], [50, 4], [50, 5], [60, 3], [60, 2],
@@ -417,31 +412,32 @@ shs_catalog = [[20, 2], [30, 2], [40, 2], [40, 3], [40, 4], [50, 2], [50, 3], [5
                [260, 12.5], [300, 6],
                [300, 8], [300, 10], [300, 12.5], [350, 8], [350, 10], [400, 10], [350, 12.5], [400, 12.5]]
 
+parameters = ([1000, 2000, 250], [1000, 4000, 250], [3, 10])
+constraints = (10000, -20)
 
-parameters = ([1000,2000,250],[1000,4000,250],[3,10])
-constraints = (10000,-20)
-
-Trusses = population(100,parameters,constraints)
-
+Trusses = population(100, parameters, constraints,1)
 
 pop_analyze(Trusses)
+fitness(Trusses)
+gen_sum = np.zeros((100, 6))
+for n, i in enumerate(Trusses):
+    gen_sum[n] = [int(n), i.point, i.util.max(), i.W, i.nm, i.L/i.u.max()]
 
-T1 = Trusses[0]
-k = T1.stiffness()
-u = np.vstack((disp(T1.f, k, 4), np.zeros((4, 1))))
-T1.u = u
+sorted = gen_sum[gen_sum[:, 1].argsort()]
+print(sorted)
 
-lines = T1.truss_geo()
 
 ax = plt.axes()
 ax.set_xlim(-1000, 10000 + 1000)
 ax.set_ylim(-3000, 1 * (12000 + 1000))
-segments = LineCollection(lines, linewidths=2)
-ax.add_collection(segments)
 
-lines = T1.truss_geo(deformed=True, ud=u)
+for n, i in enumerate(Trusses):
+    lines = i.truss_geo(5000 * n)
+    segments = LineCollection(lines, linewidths=2)
+    ax.add_collection(segments)
 
-segments = LineCollection(lines, linewidths=2,color="r")
-ax.add_collection(segments)
+    lines = i.truss_geo(5000 * n, deformed=True, ud=i.u)
+    segments = LineCollection(lines, linewidths=2, color="r")
+    ax.add_collection(segments)
 
 plt.show()
